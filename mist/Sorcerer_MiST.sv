@@ -107,6 +107,9 @@ module Sorcerer_MiST (
 `ifdef USE_AUDIO_IN
 	input         AUDIO_IN,
 `endif
+`ifdef USE_EXPANSION
+	output        EXP5,
+`endif
 	input         UART_RX,
 	output        UART_TX
 
@@ -171,6 +174,10 @@ localparam CONF_STR = {
 	"O2,Video,NTSC,PAL;",
 	"O7,Display timings,Original,Normalized;",
 	"O89,RAM,8k,16k,32k;",
+	"OA,CPU Speed,2 MHz,4 MHz;",
+`ifndef USE_EXPANSION
+	"OB,Userport,Tape,UART;",
+`endif
 	"O34,Scanlines,Off,25%,50%,75%;",
 	"O5,Blend,Off,On;",
 	"O6,Tape Sounds,Off,On;",
@@ -185,6 +192,8 @@ wire        tapesnd = status[6];
 wire        pal = status[2];
 wire        timings = status[7];
 wire  [1:0] ramsz = status[9:8];
+wire        turbo = status[10];
+wire        uart_en = status[11];
 
 assign 		LED = ~ioctl_downl;
 
@@ -292,6 +301,8 @@ wire        hs, vs;
 wire        hb, vb;
 reg   [1:0] cass_in;
 wire        cass_out;
+wire        cass_motor;
+wire        uart_tx;
 wire        upcase;
 
 wire [14:0] ram_addr;
@@ -307,6 +318,13 @@ always @(posedge clk12) begin
 	cass_in[1] <= cass_in[0];
 end
 
+`ifdef USE_EXPANSION
+assign EXP5 = ~cass_motor;
+assign UART_TX = uart_tx;
+`else
+assign UART_TX = uart_en ? uart_tx : ~cass_motor;
+`endif
+
 Sorcerer Sorcerer (
 	.RESET(reset),
 	.CLK12(clk12),
@@ -318,9 +336,10 @@ Sorcerer Sorcerer (
 	.AUDIO(audio),
 	.CASS_IN(cass_in[1]),
 	.CASS_OUT(cass_out),
-	.CASS_CTRL(UART_TX),
+	.CASS_CTRL(cass_motor),
 	.PAL(pal),
 	.ALTTIMINGS(timings),
+	.TURBO(turbo),
 
 	.KEY_STROBE(key_strobe),
 	.KEY_PRESSED(key_pressed),
@@ -334,6 +353,9 @@ Sorcerer Sorcerer (
 	.RAM_WR(ram_wr),
 	.RAM_DOUT(ram_dout),
 	.RAM_DIN(ram_din),
+
+	.UART_RX(UART_RX),
+	.UART_TX(uart_tx),
 
 	.DL(ioctl_downl),
 	.DL_CLK(clk48),

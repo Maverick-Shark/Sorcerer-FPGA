@@ -33,6 +33,7 @@ module Sorcerer (
 	output        CASS_CTRL,
 	input         PAL,
 	input         ALTTIMINGS,
+	input         TURBO,
 
 	input         KEY_STROBE,
 	input         KEY_PRESSED,
@@ -47,6 +48,9 @@ module Sorcerer (
 	input   [7:0] RAM_DOUT,
 	output  [7:0] RAM_DIN,
 
+	input         UART_RX,
+	output        UART_TX,
+
 	// DMA bus
 	input         DL,
 	input         DL_CLK,
@@ -59,13 +63,14 @@ module Sorcerer (
 );
 
 // clock enables
-reg cen6, cen2;
+reg cen6, cen2, cen4;
 reg   [2:0] cnt;
 always @(posedge CLK12) begin
 	cen6 <= ~cen6;
 	cnt <= cnt + 1'd1;
 	if (cnt == 5) cnt <= 0;
 	cen2 <= cnt == 0;
+	cen4 <= cnt == 0 || cnt == 3;
 end
 
 // video circuit
@@ -175,7 +180,7 @@ wire        busak_n;
 T80s T80 (
 	.RESET_n(~RESET),
 	.CLK(CLK12),
-	.CEN(cen2),
+	.CEN(TURBO ? cen4 : cen2),
 	.WAIT_n(~DL),
 	.INT_n(int_n),
 	.NMI_n(nmi_n),
@@ -247,7 +252,10 @@ wire        pacsel = rfsh_n & ~mreq_n & cpu_addr[15:13] == 3'b110 & pac_loaded;
 
 wire        ioen = ~iorq_n & &cpu_addr[7:2];
 wire  [7:0] io_in = ~rd_n & 
-            (cpu_addr[1:0] == 2'b10 ? {2'b00, vcnt[8], kbd_in} : 8'hff);
+            (cpu_addr[1:0] == 2'b10 ? {2'b11, vcnt[8], kbd_in} : 
+            uart_data_sel ? uart_dout :
+            uart_ctrl_sel ? uart_status :
+            8'hff);
 
 assign      cpu_din = romcs ? rom_dout :
                       ramen ? RAM_DOUT :
@@ -263,12 +271,105 @@ assign      RAM_WR = ramen & ~wr_n;
 assign      RAM_DIN = cpu_dout;
 
 reg   [3:0] kbd_out;
+reg         rs232_sel;
+reg         baud_sel;
+reg   [1:0] motor_ctrl;
 wire  [4:0] kbd_in = key_matrix[kbd_out];
+wire  [7:0] uart_dout;
+wire  [7:0] uart_status;
+wire        uart_data_sel = ioen & cpu_addr[1:0] == 2'b00;
+wire        uart_ctrl_sel = ioen & cpu_addr[1:0] == 2'b01;
+reg         cen_4800, cen_19200, cen_38400;
+reg         uart_rx_cen, uart_tx_cen;
+
+reg   [5:0] div55_cnt;
+reg   [2:0] div8_cnt;
+always @(posedge CLK12) begin
+	cen_38400 <= 0;
+	if (cen2) begin
+		div55_cnt <= div55_cnt + 1'd1;
+		if (div55_cnt == 54) begin
+			div55_cnt <= 0;
+			cen_38400 <= 1;
+		end
+	end
+	if (cen_38400) 
+		div8_cnt <= div8_cnt + 1'd1;
+
+	cen_19200 <= cen_38400 & div8_cnt[0];
+	cen_4800 <= cen_38400 & ~|div8_cnt;
+
+end
+
+always @(*) begin
+	case ({rs232_sel, baud_sel})
+		3: uart_rx_cen = cen_19200;
+		2: uart_rx_cen = cen_4800;
+		1: uart_rx_cen = cen_19200; // casette read clock (1200 baud) - emulate PLL? - UART syncs to byte start anyway
+		0: uart_rx_cen = cen_4800;  // casette read clock (300 baud) - emulate PLL?
+		default: uart_rx_cen = 1;
+	endcase
+
+	uart_tx_cen = baud_sel ? cen_19200 : cen_4800;
+end
+
+wire        decode_cen = baud_sel ? cen_19200 : cen_38400;
+reg   [2:0] decoder;
+reg   [3:0] decoder_cnt;
+
+always @(posedge CLK12) begin
+	reg cass_in_d;
+	cass_in_d <= CASS_IN;
+	if (cass_in_d ^ CASS_IN) begin
+		decoder[0] <= 1;
+		decoder[1] <= decoder[0];
+	end
+	if (decode_cen) begin
+		if (decoder[0]) 
+			decoder_cnt <= decoder_cnt + 1'd1;
+		else
+			decoder_cnt <= 4;
+
+		if (decoder_cnt == 4'he) begin
+			decoder[0] <= 0;
+			if (decoder[0]) decoder[2] <= decoder[1];
+		end
+		if (decoder_cnt == 4'hf)
+			decoder_cnt <= 4;
+	end
+end
+
+gen_uart_ay_31015 uart (
+	.reset(RESET),
+	.clk(CLK12),
+	.rx_clk_en(uart_rx_cen),
+	.tx_clk_en(uart_tx_cen),
+	.din(cpu_dout),
+	.dout(uart_dout),
+	.ds_n(~(uart_data_sel & ~wr_n)),
+	.eoc(),
+	// status
+	.pe(uart_status[4]),
+	.fe(uart_status[3]),
+	.ovr(uart_status[2]),
+	.tbmt(uart_status[0]),
+	.dav(uart_status[1]),
+	.rdav_n(~(uart_data_sel & ~rd_n)),
+	// control
+	.cs(uart_ctrl_sel & ~wr_n),
+	.np(cpu_dout[4]),  // no parity
+	.tsb(cpu_dout[2]), // number of stop bits (not implemented)
+	.nb(cpu_dout[1:0]),  // word length
+	.eps(cpu_dout[3]), // even parity select
+	// uart pins
+	.rx(rs232_sel ? UART_RX : decoder[2]),
+	.tx(UART_TX)
+);
 
 always @(posedge CLK12) begin
 	if (RESET)
 		kbd_out <= 0;
-	else if (ioen & ~wr_n & cpu_addr[1:0] == 2'b10) kbd_out <= cpu_dout[3:0];
+	else if (ioen & ~wr_n & cpu_addr[1:0] == 2'b10) {rs232_sel, baud_sel, motor_ctrl, kbd_out} <= cpu_dout;
 end
 
 reg   [4:0] key_matrix[16];
