@@ -170,6 +170,7 @@ assign SDRAM2_nWE = 1;
 localparam CONF_STR = {
 	"SORCERER;;",
 	"F1,ROM,Load PAC;",
+	"F2,TAP,Load Tape;",
 	`SEP
 	"O2,Video,NTSC,PAL;",
 	"O7,Display timings,Original,Normalized;",
@@ -195,7 +196,8 @@ wire  [1:0] ramsz = status[9:8];
 wire        turbo = status[10];
 wire        uart_en = status[11];
 
-assign 		LED = ~ioctl_downl;
+wire        ledb;
+assign      LED = ~ledb;
 
 wire clk48, clk12, pll_locked;
 pll pll(
@@ -305,7 +307,7 @@ wire        cass_motor;
 wire        uart_tx;
 wire        upcase;
 
-wire [14:0] ram_addr;
+wire [16:0] ram_addr;
 wire        ram_rd, ram_wr;
 wire  [7:0] ram_dout, ram_din;
 
@@ -364,7 +366,9 @@ Sorcerer Sorcerer (
 	.DL_WE(ioctl_wr),
 	.DL_ROM(ioctl_index == 0),
 	.DL_PAC(ioctl_index == 1),
-	.UNL_PAC(status[1])
+	.DL_TAPE(ioctl_index == 2),
+	.UNL_PAC(status[1]),
+	.LED(ledb)
 );
 
 sdram sdram (

@@ -42,7 +42,7 @@ module Sorcerer (
 	output        UPCASE,
 
 	input   [1:0] RAM_SIZE,
-	output [14:0] RAM_ADDR,
+	output [16:0] RAM_ADDR,
 	output        RAM_RD,
 	output        RAM_WR,
 	input   [7:0] RAM_DOUT,
@@ -59,7 +59,10 @@ module Sorcerer (
 	input         DL_WE,
 	input         DL_ROM,
 	input         DL_PAC,
-	input         UNL_PAC
+	input         DL_TAPE,
+	input         UNL_PAC,
+
+	output        LED
 );
 
 // clock enables
@@ -253,8 +256,8 @@ wire        pacsel = rfsh_n & ~mreq_n & cpu_addr[15:13] == 3'b110 & pac_loaded;
 wire        ioen = ~iorq_n & &cpu_addr[7:2];
 wire  [7:0] io_in = ~rd_n & 
             (cpu_addr[1:0] == 2'b10 ? {2'b11, vcnt[8], kbd_in} : 
-            uart_data_sel ? uart_dout :
-            uart_ctrl_sel ? uart_status :
+            uart_data_sel ? (tape_emu_ready ? tape_emu_dout : uart_dout) :
+            uart_ctrl_sel ? (tape_emu_ready ? 8'h02 : uart_status) :
             8'hff);
 
 assign      cpu_din = romcs ? rom_dout :
@@ -265,10 +268,17 @@ assign      cpu_din = romcs ? rom_dout :
                       (~cs4 & ~db1e) ? charram_q :
                       ioen ? io_in : 8'hff;
 
-assign      RAM_ADDR = cpu_addr[14:0];
-assign      RAM_RD = ramen & ~rd_n;
-assign      RAM_WR = ramen & ~wr_n;
-assign      RAM_DIN = cpu_dout;
+wire        tape_dl = DL_TAPE & DL;
+reg   [7:0] tape_wr;
+always @(posedge DL_CLK) begin
+	if (DL_WE) tape_wr <= 8'hFF;
+	else tape_wr <= {1'b0, tape_wr[7:1]};
+end
+
+assign      RAM_ADDR = tape_dl ? {1'b1, DL_ADDR[15:0]} : rfsh_n ? {2'b00, cpu_addr[14:0]} : {1'b1, tape_emu_addr};
+assign      RAM_RD = tape_dl ? 1'b0 : !rfsh_n | (ramen & ~rd_n);
+assign      RAM_WR = tape_dl ? |tape_wr : ramen & ~wr_n;
+assign      RAM_DIN = tape_dl ? DL_DATA : cpu_dout;
 
 reg   [3:0] kbd_out;
 reg         rs232_sel;
@@ -479,6 +489,41 @@ always @(posedge CLK12) begin : KEYBOARD
 			endcase
 		end
 	end
+
 end
+
+// Tape emulation
+reg [15:0] tape_emu_addr;
+reg [15:0] tape_emu_end;
+reg        tape_emu_ready;
+reg  [7:0] tape_emu_dout;
+
+always @(posedge DL_CLK) begin : tape_emu
+	reg rfshb_d;
+	reg data_sel_d;
+
+	if (RESET) begin
+		tape_emu_addr <= 0;
+		tape_emu_end <= 0;
+		tape_emu_ready <= 0;
+	end else begin
+		if (tape_dl) begin
+			tape_emu_addr <= 0;
+			if (DL_WE) begin
+				tape_emu_end <= DL_ADDR[15:0];
+				tape_emu_ready <= 1;
+			end
+		end
+		rfshb_d <= rfsh_n;
+		if (~rfshb_d & rfsh_n) tape_emu_dout <= RAM_DOUT;
+		data_sel_d <= uart_data_sel & ~rd_n;
+		if (data_sel_d & ~(uart_data_sel & ~rd_n) & tape_emu_ready) begin
+			tape_emu_addr <= tape_emu_addr + 1'd1;
+			if (tape_emu_addr == tape_emu_end) tape_emu_ready <= 0;
+		end
+	end
+end
+
+assign LED = DL | tape_emu_ready;
 
 endmodule
