@@ -2,6 +2,11 @@
 
 The Sorcerer is a home computer system released in 1978 by the video game company Exidy.
 
+### ROM file
+
+The core needs a .ROM file, which can be created from rom/Sorcerer.mra, using MAME ROM collection (only *sorcerer.zip* is needed),
+and the [MRA tool](https://github.com/mist-devel/mra-tools-c).
+
 ### Tape Loading
 
 Loading real tapes are supported (using UART_RX on MiST or the Audio input port on SiDi).
