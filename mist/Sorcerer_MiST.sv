@@ -108,7 +108,10 @@ module Sorcerer_MiST (
 	input         AUDIO_IN,
 `endif
 `ifdef USE_EXPANSION
-	output        EXP5,
+	input         UART_CTS,
+	output        UART_RTS,
+	inout         EXP7,
+	inout         MOTOR_CTRL,
 `endif
 	input         UART_RX,
 	output        UART_TX
@@ -321,8 +324,10 @@ always @(posedge clk12) begin
 end
 
 `ifdef USE_EXPANSION
-assign EXP5 = ~cass_motor;
+assign MOTOR_CTRL = cass_motor ? 1'b0 : 1'bZ;
 assign UART_TX = uart_tx;
+assign UART_RTS = 1'b0;
+assign EXP7 = 1'bZ;
 `else
 assign UART_TX = uart_en ? uart_tx : ~cass_motor;
 `endif

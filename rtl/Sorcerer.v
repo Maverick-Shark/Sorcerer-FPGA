@@ -382,6 +382,7 @@ always @(posedge CLK12) begin
 	else if (ioen & ~wr_n & cpu_addr[1:0] == 2'b10) {rs232_sel, baud_sel, motor_ctrl, kbd_out} <= cpu_dout;
 end
 
+assign CASS_CTRL = motor_ctrl[0];
 reg   [4:0] key_matrix[16];
 assign UPCASE = ~key_matrix[0][3];
 
